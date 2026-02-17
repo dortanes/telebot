@@ -135,9 +135,10 @@ async function buildKeyboard(
   chatId: number,
   translator?: (key: string, ctx: TelebotContext) => string,
   backToMenuId?: string,
-): Promise<{ text: string; keyboard: InlineKeyboard; parseMode?: ParseMode }> {
+): Promise<{ text: string; keyboard: InlineKeyboard; parseMode?: ParseMode; imageUrl?: string }> {
   const keyboard = new InlineKeyboard();
   let text = "";
+  let imageUrl: string | undefined;
   let parseMode: ParseMode | undefined;
   const maxPerRow = layout._maxPerRow;
   let currentRowCount = 0;
@@ -165,6 +166,11 @@ async function buildKeyboard(
       case "text": {
         text = translator ? translator(el.content, ctx) : el.content;
         parseMode = el.parseMode;
+        break;
+      }
+
+      case "image": {
+        imageUrl = el.url;
         break;
       }
 
@@ -289,7 +295,7 @@ async function buildKeyboard(
     keyboard.text(backText, `nav:${backToMenuId}`);
   }
 
-  return { text: text || "Menu", keyboard, parseMode };
+  return { text: text || "Menu", keyboard, parseMode, imageUrl };
 }
 
 
@@ -567,16 +573,43 @@ export function installMenu(
         builder(freshLayout); 
       }
   
-      const { text, keyboard, parseMode } = await buildKeyboard(menuId, freshLayout, ctx, chatId, config.translator, menu.parent);
+      const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(menuId, freshLayout, ctx, chatId, config.translator, menu.parent);
       
+      const isPhotoMessage = !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message;
+
       if (edit) {
         try {
-            await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: parseMode });
+            if (imageUrl) {
+              if (isPhotoMessage) {
+                // Edit existing photo message
+                await ctx.editMessageMedia(
+                  { type: "photo", media: imageUrl, caption: text, parse_mode: parseMode },
+                  { reply_markup: keyboard }
+                );
+              } else {
+                // Transition: Text -> Photo (Delete and send new)
+                try { await ctx.deleteMessage(); } catch {}
+                await ctx.replyWithPhoto(imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });
+              }
+            } else {
+              if (isPhotoMessage) {
+                // Transition: Photo -> Text (Delete and send new)
+                try { await ctx.deleteMessage(); } catch {}
+                await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
+              } else {
+                // Regular text edit
+                await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: parseMode });
+              }
+            }
         } catch (e) {
-            // ignore "not modified"
+            // ignore "not modified" or other edit errors during navigation
         }
       } else {
-        await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
+        if (imageUrl) {
+          await ctx.replyWithPhoto(imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });
+        } else {
+          await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
+        }
       }
   }
 
@@ -693,6 +726,10 @@ export async function sendMenu(
 ): Promise<void> {
   const layout = new LayoutBuilder();
   menuRef.builder(layout);
-  const { text, keyboard, parseMode } = await buildKeyboard(menuRef.id, layout, ctx, chatId, translator, undefined);
-  await bot.api.sendMessage(chatId, text, { reply_markup: keyboard, parse_mode: parseMode });
+  const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(menuRef.id, layout, ctx, chatId, translator, undefined);
+  if (imageUrl) {
+    await bot.api.sendPhoto(chatId, imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });
+  } else {
+    await bot.api.sendMessage(chatId, text, { reply_markup: keyboard, parse_mode: parseMode });
+  }
 }

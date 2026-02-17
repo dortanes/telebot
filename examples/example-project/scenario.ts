@@ -132,6 +132,10 @@ const timeMenu = Telebot.menu(layout => {
 export default Telebot.menu(layout => {
   layout.maxPerRow(2); // Maximum of 2 buttons per row
 
+  // Image
+  layout.image("https://static.vecteezy.com/system/resources/thumbnails/050/393/628/small/cute-curious-gray-and-white-kitten-in-a-long-shot-photo.jpg")
+
+  // Text
   layout.text("Welcome to the <b>Telebot</b> Example Scenario!\nSelect an option below to explore.")
     .parseAs("HTML");
 

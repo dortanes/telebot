@@ -15,6 +15,7 @@ import { ListBuilder } from "./list.js";
  */
 export type LayoutElement =
   | { kind: "text"; content: string; parseMode?: ParseMode }
+  | { kind: "image"; url: string }
   | { kind: "button"; builder: ButtonBuilder }
   | { kind: "list"; builder: ListBuilder<any> }
   | { kind: "refresh"; label: string };
@@ -43,6 +44,14 @@ export class LayoutBuilder implements LayoutBuilderInterface {
     const element: Extract<LayoutElement, { kind: "text" }> = { kind: "text", content };
     this._elements.push(element);
     return new TextBuilder(element);
+  }
+
+  /**
+   * Set the menu header image.
+   * @param url - The image URL.
+   */
+  image(url: string): void {
+    this._elements.push({ kind: "image", url });
   }
 
   /**

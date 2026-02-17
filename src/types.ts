@@ -238,6 +238,8 @@ export interface ListConfig<T> {
 export interface LayoutBuilderInterface {
   /** Set the menu body text */
   text(content: string): TextBuilderInterface;
+  /** Set the menu header image */
+  image(url: string): void;
   /** Add a button to the menu */
   button(label: DynamicLabel): ButtonBuilderInterface;
   /** Add a paginated grid of items */

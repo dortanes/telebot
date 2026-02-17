@@ -10,12 +10,24 @@ Menus are created using `Telebot.menu()`. You provide a builder function that us
 import { Telebot } from "@superpackages/telebot";
 
 const mainMenu = Telebot.menu((layout) => {
+  // Add a header image
+  layout.image("https://example.com/header.jpg");
+
   layout.text("Welcome to the Bot! Choose an option:");
 
   layout.button("Settings").menu(settingsMenu);
   layout.button("Help").action(helpAction);
 });
 ```
+
+## Media and Images
+
+You can include a header image in your menu using `layout.image(url)`.
+
+- If an image is present, the menu will be sent as a **Photo Message**, with the `layout.text` as the caption.
+- Telebot automatically handles transitions:
+  - Switching between two menus with images will **edit the media** (smooth transition).
+  - Switching from an image menu to a text-only menu (or vice versa) will **delete the previous message** and send a new one of the correct type to maintain the "single-message" user experience.
 
 ## Adding Buttons
 

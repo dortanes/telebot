@@ -88,9 +88,12 @@ export function createConversationHelper(
         await ctx.api.editMessageText(chatId, lastMessageId, text, { reply_markup: keyboard });
         return;
       } catch (e) {
+        // If message is not modified, we are fine
         if ((e as any).description?.includes("message is not modified")) {
             return;
         }
+        // If edit fails (e.g., transition from photo to text), we try to delete and send new
+        try { await ctx.api.deleteMessage(chatId, lastMessageId); } catch {}
       }
     }
     
