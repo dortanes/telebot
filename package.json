@@ -1,0 +1,55 @@
+{
+  "name": "@superpackages/telebot",
+  "version": "1.0.0",
+  "description": "A framework for easily building push-button Telegram bots. From the simplest to the most complex.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start:example": "tsx examples/example-project/main.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dortanes/telebot.git"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "framework",
+    "grammy",
+    "declarative",
+    "conversation",
+    "menu"
+  ],
+  "author": "dortanes",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dortanes/telebot/issues"
+  },
+  "homepage": "https://github.com/dortanes/telebot#readme",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.21.0"
+  },
+  "dependencies": {
+    "@grammyjs/conversations": "^2.1.1",
+    "grammy": "^1.40.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
