@@ -60,6 +60,7 @@ Explore the detailed guides:
 - [Conversations and Forms](docs/conversations.md) - Collecting user input and complex data.
 - [Actions and Triggers](docs/actions.md) - Logic, commands, and regex triggers.
 - [State Management](docs/state.md) - Sessions, storage, and user resolution.
+- [Advanced Patterns](docs/advanced.md) - I18n, custom storage, and manual rendering.
 
 ## 🤝 Contributing
 

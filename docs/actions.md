@@ -1,63 +1,74 @@
 # Actions and Triggers
 
-Actions are the logic of your bot. They can be triggered by menu buttons or global triggers like commands, words, or regex.
+Actions are the functional units of your bot. They can be attached to menu buttons or triggered globally by user messages.
 
-## Creating an Action
+## Types of Actions
+
+Telebot distinguishes between two types of actions based on how they are defined:
+
+### 1. Conversational Actions (Async)
+
+Defined using an `async` function. These actions have access to the `conversation` helper, allowing them to wait for user input.
 
 ```ts
-import { Telebot } from "@superpackages/telebot";
-
-const myAction = Telebot.action(async ({ ctx, payload, conversation, ui }) => {
-  // Logic goes here
+const myAction = Telebot.action(async ({ conversation }) => {
+  const name = await conversation.ask("What is your name?");
+  // ... process name
 });
 ```
 
-### Action Context
+### 2. Sync Actions (Functional)
 
-- `ctx`: The full Grammy `TelebotContext`.
-- `payload`: Data passed from the button or trigger.
-- `conversation`: The `ConversationHelper` for `ask()` and `form()`.
-- `ui`: Helpers for `toast()` and `alert()`.
+Defined using a standard function. These are executed immediately without entering a "conversation mode". Perfect for "Tab" switching or simple alerts.
+
+```ts
+layout.button("Option A").action(() => {
+  selectedTab = "A"; // Updates internal state for the next render
+});
+```
 
 ## Global Triggers
 
-You can attach triggers to actions so they work even if the user isn't in a menu.
+You can make actions accessible via global input triggers. When triggered globally, these actions always start as a fresh conversation.
 
 ```ts
-// Triggered by /help
-const helpAction = Telebot.command("help").action(async ({ ctx }) => {
-  await ctx.reply("Help content...");
-});
+// Triggered by /start
+const startAction = Telebot.command("start").action(...);
 
-// Triggered by specific words
-Telebot.word("hello").action(async ({ ctx }) => {
-  await ctx.reply("Hi there!");
-});
+// Triggered by "Help" text
+const helpAction = Telebot.word("Help").action(...);
 
-// Triggered by Regex with Capture Groups
-Telebot.regexp(/user_(\d+)/).action(async ({ payload }) => {
-  // payload.id will be the captured digits
-  console.log("Viewing user", payload.id);
+// Triggered by regex with capture groups
+const userAction = Telebot.regexp(/user_(\d+)/).action(async ({ payload }) => {
+  // payload.id will contain the captured group
+  console.log(payload.id);
 });
 ```
 
-## Attaching to Buttons
+## The Action Context
 
-Actions are commonly attached to menu buttons:
+Every action handler receives a context object:
+
+| Property       | Description                                                         |
+| :------------- | :------------------------------------------------------------------ |
+| `ctx`          | The standard Grammy `TelebotContext`.                               |
+| `payload`      | Data passed from the button's `.payload()` or regex capture groups. |
+| `conversation` | Helper for `ask()` and `form()` (Conversational actions only).      |
+| `ui`           | Helpers for `toast()` and `alert()`.                                |
+
+## Payloads
+
+Payloads are JSON-serializable objects. When you use `.payload({ id: 1 })` on a button, Telebot encodes this data into the callback query.
+
+> [!IMPORTANT]
+> Since Telegram has a 64-character limit for callback data, keep your payload objects small. Use IDs instead of full objects.
+
+## Inline Actions
+
+For small logic, you can define actions directly inside the menu builder:
 
 ```ts
-layout.button("View Profile").payload({ userId: 123 }).action(profileAction);
-```
-
-## Static vs Inline Actions
-
-You can define an action separately for reuse (as shown above) or inline for simple logic:
-
-```ts
-layout.button("Quick Hello").action(async ({ ctx }) => {
-  await ctx.reply("Hello!");
+layout.button("Click me").action(async ({ ui }) => {
+  await ui.toast("Hello!");
 });
 ```
-
-> [!NOTE]
-> Inline actions used inside `Telebot.menu()` are treated as conversational by default, meaning they can use `conversation.ask()`.
