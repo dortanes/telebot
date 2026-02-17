@@ -10,6 +10,7 @@ import type {
   ButtonConfig,
   GuardFn,
   ParseMode,
+  Translator,
 } from "../types.js";
 import { LayoutBuilder, type LayoutElement } from "../menu/layout.js";
 import { ButtonBuilder, isActionRef } from "../menu/button.js";
@@ -33,8 +34,11 @@ function pageKey(chatId: number, menuId: string, listIdx: number): string {
 // ─── Resolve dynamic label ─────────────────────────────────────────────────────
 
 /** @internal */
-function resolveLabel(config: ButtonConfig, ctx: TelebotContext): string {
-  return typeof config.label === "function" ? config.label(ctx) : config.label;
+function resolveLabel(config: ButtonConfig, ctx: TelebotContext, translator?: Translator): string {
+  if (typeof config.label === "function") {
+    return config.label(ctx);
+  }
+  return translator ? translator(config.label, ctx) : config.label;
 }
 
 // ─── Check guard ───────────────────────────────────────────────────────────────
@@ -159,7 +163,7 @@ async function buildKeyboard(
   for (const el of snapshotElements) {
     switch (el.kind) {
       case "text": {
-        text = el.content;
+        text = translator ? translator(el.content, ctx) : el.content;
         parseMode = el.parseMode;
         break;
       }
@@ -171,7 +175,7 @@ async function buildKeyboard(
 
         if (!(await passesGuard(cfg.guard, ctx))) break;
 
-        const label = resolveLabel(cfg, ctx);
+        const label = resolveLabel(cfg, ctx, translator);
         const btnId = cfg.buttonId ?? label;
 
         if (cfg.forceRow || (maxPerRow > 0 && currentRowCount >= maxPerRow)) {
@@ -236,7 +240,7 @@ async function buildKeyboard(
           }
           const btn = lcfg.renderFn(item) as ButtonBuilder;
           const bcfg = btn._config;
-          const label = typeof bcfg.label === "function" ? bcfg.label(ctx) : bcfg.label;
+          const label = resolveLabel(bcfg, ctx, translator);
           const btnId = bcfg.buttonId ?? label;
 
           let cbData: string;
@@ -270,7 +274,8 @@ async function buildKeyboard(
 
       case "refresh": {
         keyboard.row();
-        keyboard.text(el.label, `refresh:${menuId}`);
+        const label = translator ? translator(el.label, ctx) : el.label;
+        keyboard.text(label, `refresh:${menuId}`);
         currentRowCount = 0;
         break;
       }
@@ -684,9 +689,10 @@ export async function sendMenu(
   chatId: number,
   menuRef: MenuRef,
   ctx: TelebotContext,
+  translator?: Translator,
 ): Promise<void> {
   const layout = new LayoutBuilder();
   menuRef.builder(layout);
-  const { text, keyboard, parseMode } = await buildKeyboard(menuRef.id, layout, ctx, chatId, undefined, undefined);
+  const { text, keyboard, parseMode } = await buildKeyboard(menuRef.id, layout, ctx, chatId, translator, undefined);
   await bot.api.sendMessage(chatId, text, { reply_markup: keyboard, parse_mode: parseMode });
 }

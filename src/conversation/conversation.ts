@@ -117,6 +117,8 @@ export function createConversationHelper(
     optionsOrBuilder: AskOptions<any> | AskKeyboardBuilder,
   ): Promise<any> {
     
+    const translatedQuestion = tr(question, question);
+
     // Branch 1: inline-keyboard selection
     if (isFunction(optionsOrBuilder)) {
       const kb = new AskKeyboardImpl();
@@ -125,12 +127,13 @@ export function createConversationHelper(
       const inlineKb = new InlineKeyboard();
       for (const btn of kb.buttons) {
         const btnId = btn._id ?? btn.text;
-        inlineKb.text(btn.text, `ask:${btnId}`);
+        const btnLabel = tr(btn.text, btn.text);
+        inlineKb.text(btnLabel, `ask:${btnId}`);
       }
       const cancelText = tr("telebot.cancel", "🚫 Cancel");
       inlineKb.row().text(cancelText, "ask:__cancel__");
 
-      await editOrReply(question, inlineKb);
+      await editOrReply(translatedQuestion, inlineKb);
 
       const cbCtx = await conversation.waitForCallbackQuery(/^ask:/, {
         otherwise: async (c) => {
@@ -155,7 +158,8 @@ export function createConversationHelper(
     const cancelText = tr("telebot.cancel", "🚫 Cancel");
     const cancelKb = new InlineKeyboard().text(cancelText, "cancel_conversation");
 
-    let currentPrompt = question;
+    let currentPrompt = translatedQuestion;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     let isError = false;
 
     // Loop until valid input
@@ -173,8 +177,8 @@ export function createConversationHelper(
 
             if (!updateCtx.message?.photo) {
                 try { await updateCtx.deleteMessage(); } catch {}
-                const err = opts.errorMessage ?? tr("telebot.conversation.photo_error", "Please send a photo.");
-                currentPrompt = `${err}\n\n${question}`;
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.photo_error", "Please send a photo.");
+                currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
             }
@@ -197,8 +201,8 @@ export function createConversationHelper(
 
         if (!updateCtx.message?.text) {
             try { await updateCtx.deleteMessage(); } catch {}
-            const err = opts.errorMessage ?? tr("telebot.conversation.text_error", "Please send a text message.");
-            currentPrompt = `${err}\n\n${question}`;
+            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.text_error", "Please send a text message.");
+            currentPrompt = `${err}\n\n${translatedQuestion}`;
             isError = true;
             continue;
         }
@@ -210,14 +214,14 @@ export function createConversationHelper(
         if (fieldType === "number") {
             const n = Number(raw);
             if (Number.isNaN(n)) {
-                const err = opts.errorMessage ?? tr("telebot.conversation.number_error", "Please send a valid number.");
-                currentPrompt = `${err}\n\n${question}`;
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.number_error", "Please send a valid number.");
+                currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
             }
             if (opts.validate && !opts.validate(n)) {
-                const err = opts.errorMessage ?? tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
-                currentPrompt = `${err}\n\n${question}`;
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
+                currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
             }
@@ -225,8 +229,8 @@ export function createConversationHelper(
         }
 
         if (opts.validate && !opts.validate(raw)) {
-            const err = opts.errorMessage ?? tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
-            currentPrompt = `${err}\n\n${question}`;
+            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
+            currentPrompt = `${err}\n\n${translatedQuestion}`;
             isError = true;
             continue;
         }

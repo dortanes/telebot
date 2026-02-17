@@ -188,7 +188,7 @@ export class TelebotApp {
    * @param ctx - The current context.
    */
   async sendMenu(chatId: number, ctx: TelebotContext): Promise<void> {
-    await sendMenu(this.bot, chatId, this.rootMenu, ctx);
+    await sendMenu(this.bot, chatId, this.rootMenu, ctx, this.config.translator);
   }
 
   /**
