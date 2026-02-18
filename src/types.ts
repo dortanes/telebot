@@ -65,8 +65,8 @@ export type AskFieldType = "text" | "number" | "photo";
 export interface AskOptions<T = string> {
   /** Expected input type */
   type?: AskFieldType;
-  /** Custom validation function */
-  validate?: (value: T) => boolean;
+  /** Custom validation function (can be async) */
+  validate?: (value: T) => boolean | Promise<boolean>;
   /** Message to send if validation fails */
   errorMessage?: string;
 }
@@ -79,6 +79,18 @@ export interface AskKeyboardButton {
   _id?: string;
   /** Set the button ID */
   id(value: string): AskKeyboardButton;
+  /** Set a URL (makes it a URL button) */
+  url(value: string): AskKeyboardButton;
+  /** Set an action handler */
+  action(handler: ButtonActionHandler): AskKeyboardButton;
+  /** Set a submenu to open */
+  menu(ref: MenuRef): AskKeyboardButton;
+  /** Navigate to a submenu (shorthand for .menu()) */
+  navigate(ref: MenuRef): AskKeyboardButton;
+  /** Set custom payload for the action */
+  payload(data: Record<string, unknown>): AskKeyboardButton;
+  /** Force this button to be on a new row */
+  row(): AskKeyboardButton;
 }
 
 /** Function to build an inline keyboard for the `ask` helper */
@@ -102,16 +114,28 @@ export interface FormFieldDefinition<K extends string = string> {
 
 /** Helper provided to actions to manage conversations */
 export interface ConversationHelper {
-  /** Ask for numeric input */
-  ask(question: string, options: AskOptions<number>): Promise<number>;
-  /** Ask for text input */
-  ask(question: string, options: AskOptions<string>): Promise<string>;
+  /** 
+   * Ask for input from the user.
+   * Defaults to text input if no options are provided.
+   */
+  ask<T = string>(question: string, options?: AskOptions<T>): Promise<T>;
   /** Ask for a choice from a keyboard */
   ask(question: string, builder: AskKeyboardBuilder): Promise<string>;
+  /** 
+   * Update the current prompt with new text/buttons WITHOUT waiting for input.
+   * Useful for showing results or intermediate states.
+   */
+  say(text: string, builder?: AskKeyboardBuilder): Promise<void>;
+  /** 
+   * Manually delete the current conversation prompt.
+   */
+  delete(): Promise<void>;
   /** Run a multi-step form collection */
   form<T extends Record<string, unknown>>(
     fields: FormFieldDefinition<Extract<keyof T, string>>[],
   ): Promise<T>;
+  /** Navigate to a specific menu or the root menu */
+  navigate(menu?: MenuRef): Promise<void>;
 }
 
 // ─── UI ────────────────────────────────────────────────────────────────────────
@@ -136,6 +160,8 @@ export interface ActionContext<P = undefined> {
   conversation: ConversationHelper;
   /** UI interaction helpers */
   ui: UIHelper;
+  /** Navigate to a specific menu or the root menu */
+  navigate(menu?: MenuRef): Promise<void>;
 }
 
 /** A function that handles a specific bot action */
@@ -207,7 +233,7 @@ export interface MenuRef {
   /** Unique menu ID */
   id: string;
   /** Function that defines the menu layout */
-  builder: (layout: LayoutBuilderInterface) => void;
+  builder: (layout: LayoutBuilderInterface, ctx: TelebotContext) => void | Promise<void>;
   /** Triggers that can open this menu globally */
   triggers?: {
     commands?: string[];

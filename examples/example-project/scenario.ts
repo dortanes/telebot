@@ -23,7 +23,7 @@ const resetAction = Telebot.action(async ({ ui }) => {
  */
 const buyStarAction = Telebot.word("buy star").action(async ({ ctx, conversation }) => {
   // Input validation for a numeric type
-  const amount = await conversation.ask("How many stars would you like to buy?", {
+  const amount = await conversation.ask<number>("How many stars would you like to buy?", {
     type: "number",
     validate: (n) => n > 0 && n <= 100,
     errorMessage: "Please enter a number between 1 and 100."

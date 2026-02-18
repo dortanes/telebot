@@ -62,16 +62,19 @@ function resolveStableId(menuId: string, cfg: ButtonConfig, index: number): stri
   return `act_${menuId}_${index}`;
 }
 
-function collectMenuTree(
+async function collectMenuTree(
   rootRef: MenuRef,
   menus: Map<string, CollectedMenu>,
   actions: Map<string, ActionRef<any>>,
   parentId?: string,
-): void {
+): Promise<void> {
   if (menus.has(rootRef.id)) return;
 
   const layout = new LayoutBuilder();
-  rootRef.builder(layout);
+  // Provide a minimal mock context for scanning (guards might fail, but we try to find actions)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockCtx: any = { user: {}, session: { conversation: {} } }; 
+  await rootRef.builder(layout, mockCtx);
   menus.set(rootRef.id, { ref: rootRef, layout, parent: parentId });
 
   // Use a snapshot to avoid infinite loops if we were rendering (though here we just scan)
@@ -95,7 +98,7 @@ function collectMenuTree(
       }
 
       if (cfg.submenu) {
-        collectMenuTree(cfg.submenu, menus, actions, rootRef.id);
+        await collectMenuTree(cfg.submenu, menus, actions, rootRef.id);
       }
       btnIndex++;
     }
@@ -314,14 +317,18 @@ async function buildKeyboard(
  * @param rootRef - The root menu of the bot.
  * @param config - Framework configuration.
  */
-export function installMenu(
+export async function installMenu(
   bot: Bot<TelebotContext>,
   rootRef: MenuRef,
   config: TelebotConfig,
-): void {
+): Promise<void> {
   const menus = new Map<string, CollectedMenu>();
   const actions = new Map<string, ActionRef<any>>();
-  collectMenuTree(rootRef, menus, actions);
+  
+  // We cannot wait for initial collection here because installMenu MUST be sync
+  // to be used in constructor. We'll lazy-collect or do it in start().
+  // 0. Collect the menu tree (recursively find all menus and actions)
+  await collectMenuTree(rootRef, menus, actions);
 
   // 1. Install Session Middleware (Required for Conversations)
   bot.use(session<TelebotSession, TelebotContext>({
@@ -336,7 +343,12 @@ export function installMenu(
   // 1.5. Middleware: resolve user (Moved to prevent undefined ctx.user in guards/conversations)
   bot.use(async (ctx, next) => {
     if (config.resolveUser) {
-      ctx.user = await config.resolveUser(ctx);
+      try {
+        ctx.user = await config.resolveUser(ctx) ?? {};
+      } catch (e) {
+        console.error("[Telebot] Error in resolveUser middleware:", e);
+        ctx.user = {};
+      }
     } else {
       ctx.user = ctx.user ?? {};
     }
@@ -409,8 +421,38 @@ export function installMenu(
         }
       }
 
-      const conversationHelper = createConversationHelper(conversation, ctx, config.translator);
+      const navigate = async (menu?: MenuRef) => {
+        const targetId = menu ? menu.id : rootRef.id;
+        const targetMessageId = (conversation as any).session?.__telebot_last_msg_id;
+        await conversation.external(async (c) => {
+          // Re-resolve user to pick up changes made during the action (e.g. language change)
+          if (config.resolveUser) {
+            try {
+              c.user = await config.resolveUser(c) ?? {};
+            } catch (e) {
+              console.error("[Telebot] Error re-resolving user during navigation:", e);
+            }
+          }
+          await renderMenu(targetId, c, c.chat!.id, true, undefined, targetMessageId);
+        });
+      };
+
+      const conversationHelper = createConversationHelper(conversation, ctx, config.translator, navigate);
       const uiHelper = createUIHelper(ctx);
+
+      // Robust user resolution: if missing or empty, try re-resolving
+      if (!ctx.user || Object.keys(ctx.user).length === 0) {
+        if (config.resolveUser) {
+          try {
+            ctx.user = await config.resolveUser(ctx) ?? {};
+          } catch (e) {
+            console.error("[Telebot] Error in resolveUser inside conversation:", e);
+            ctx.user = {};
+          }
+        } else {
+          ctx.user = ctx.user ?? {};
+        }
+      }
 
       try {
         await actionRef.handler({
@@ -418,11 +460,21 @@ export function installMenu(
           payload: payload || ({} as any), // Fallback to empty object to prevent crash on destructuring
           conversation: conversationHelper,
           ui: uiHelper,
+          navigate,
         });
       } catch (e) {
-        if ((e as Error).message === "TELEBOT_CANCEL") {
+        const err = e as Error;
+        if (err.message === "TELEBOT_CANCEL") {
           // Navigate back to origin menu if possible
           await conversation.external(async (c) => {
+              // Re-resolve user to pick up changes made during the action (if any)
+              if (config.resolveUser) {
+                try {
+                  c.user = await config.resolveUser(c) ?? {};
+                } catch (e) {
+                  console.error("[Telebot] Error re-resolving user during cancellation:", e);
+                }
+              }
               if (c.session.originMenuId) {
                  await renderMenu(c.session.originMenuId, c, c.chat!.id, true);
               } else {
@@ -434,6 +486,9 @@ export function installMenu(
               }
           });
           return;
+        }
+        if (err.message === "TELEBOT_EXTERNAL") {
+          return; // Exit silently, let next middleware take over
         }
         throw e;
       }
@@ -560,7 +615,14 @@ export function installMenu(
 
   // 6. Generic Menu Renderer Logic (Navigation, Pagination, Tabs, Refresh)
 
-  async function renderMenu(menuId: string, ctx: TelebotContext, chatId: number, edit: boolean = false, prebuiltLayout?: LayoutBuilder) {
+  async function renderMenu(
+    menuId: string, 
+    ctx: TelebotContext, 
+    chatId: number, 
+    edit: boolean = false, 
+    prebuiltLayout?: LayoutBuilder,
+    targetMessageId?: number,
+  ) {
       const menu = menus.get(menuId);
       if (!menu) {
           if (edit) await ctx.answerCallbackQuery("Menu not found");
@@ -570,39 +632,46 @@ export function installMenu(
       const freshLayout = prebuiltLayout ?? new LayoutBuilder();
       if (!prebuiltLayout) {
         const builder = menu.ref.builder; 
-        builder(freshLayout); 
+        await builder(freshLayout, ctx); 
       }
   
       const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(menuId, freshLayout, ctx, chatId, config.translator, menu.parent);
       
+      const messageToEdit = targetMessageId ?? ctx.callbackQuery?.message?.message_id;
       const isPhotoMessage = !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message;
 
-      if (edit) {
+      if (edit && messageToEdit) {
         try {
             if (imageUrl) {
-              if (isPhotoMessage) {
-                // Edit existing photo message
+              if (isPhotoMessage && !targetMessageId) {
+                // Edit existing photo message (only if it was triggered by a callback on that same message)
                 await ctx.editMessageMedia(
                   { type: "photo", media: imageUrl, caption: text, parse_mode: parseMode },
                   { reply_markup: keyboard }
                 );
               } else {
-                // Transition: Text -> Photo (Delete and send new)
-                try { await ctx.deleteMessage(); } catch {}
+                // Transition or explicit target: delete and send new (or try editing media if we have ID)
+                // For targetMessageId, it's safer to just delete and send new if types might differ,
+                // but if we are sure it's a photo we could edit. 
+                // However, Telebot usually handles transitions by delete/send.
+                try { await ctx.api.deleteMessage(chatId, messageToEdit); } catch {}
                 await ctx.replyWithPhoto(imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });
               }
             } else {
-              if (isPhotoMessage) {
+              if (isPhotoMessage && !targetMessageId) {
                 // Transition: Photo -> Text (Delete and send new)
                 try { await ctx.deleteMessage(); } catch {}
                 await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
               } else {
-                // Regular text edit
-                await ctx.editMessageText(text, { reply_markup: keyboard, parse_mode: parseMode });
+                // Regular text edit or explicit target edit
+                await ctx.api.editMessageText(chatId, messageToEdit, text, { reply_markup: keyboard, parse_mode: parseMode });
               }
             }
         } catch (e) {
-            // ignore "not modified" or other edit errors during navigation
+            // If edit fails (e.g. message too old or type mismatch), fallback to reply
+            if (!targetMessageId) {
+               await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
+            }
         }
       } else {
         if (imageUrl) {
@@ -679,7 +748,7 @@ export function installMenu(
        if (!menu) return;
 
        const freshLayout = new LayoutBuilder();
-       menu.ref.builder(freshLayout);
+       await menu.ref.builder(freshLayout, ctx as TelebotContext);
 
        for (const el of freshLayout._elements) {
          if (el.kind === "button") {
@@ -725,7 +794,7 @@ export async function sendMenu(
   translator?: Translator,
 ): Promise<void> {
   const layout = new LayoutBuilder();
-  menuRef.builder(layout);
+  await menuRef.builder(layout, ctx);
   const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(menuRef.id, layout, ctx, chatId, translator, undefined);
   if (imageUrl) {
     await bot.api.sendPhoto(chatId, imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });

@@ -90,7 +90,7 @@ class TriggerBuilder {
    * @param options - Optional menu settings.
    * @returns A {@link MenuRef} that can be used or sent.
    */
-  menu(builder: (layout: LayoutBuilderInterface) => void, options?: { id?: string }): MenuRef {
+  menu(builder: (layout: LayoutBuilderInterface, ctx: TelebotContext) => void | Promise<void>, options?: { id?: string }): MenuRef {
     const ref = createMenu(builder, options);
     ref.triggers = { ...this.triggers };
     return ref;
@@ -140,7 +140,7 @@ export class Telebot {
    * @param builder - A layout builder function.
    * @param options - Optional configuration (e.g., fixed ID).
    */
-  static menu(builder: (layout: LayoutBuilderInterface) => void, options?: { id?: string }): MenuRef {
+  static menu(builder: (layout: LayoutBuilderInterface, ctx: TelebotContext) => void | Promise<void>, options?: { id?: string }): MenuRef {
     return createMenu(builder, options);
   }
 
@@ -164,6 +164,8 @@ export class TelebotApp {
   private readonly config: TelebotConfig;
   private readonly rootMenu: MenuRef;
 
+  private readonly installPromise: Promise<void>;
+
   /**
    * @internal Use {@link Telebot.create} instead.
    */
@@ -171,13 +173,14 @@ export class TelebotApp {
     this.config = options;
     this.rootMenu = options.menu;
     this.bot = new Bot<TelebotContext>(options.token);
-    installMenu(this.bot, this.rootMenu, this.config);
+    this.installPromise = installMenu(this.bot, this.rootMenu, this.config);
   }
 
   /**
    * Start the bot using long-polling.
    */
   async start(): Promise<void> {
+    await this.installPromise;
     console.log("🤖 Telebot started");
     await this.bot.start();
   }
@@ -196,14 +199,18 @@ export class TelebotApp {
    * @see grammy documentation for parameters.
    */
   webhookCallback(path?: string, onTimeout?: "throw" | "return" | "continue", timeoutMilliseconds?: number) {
-    // @ts-ignore
-    return this.bot.webhookCallback(path, onTimeout, timeoutMilliseconds);
+    return async (req: any, res: any, next?: any) => {
+      await this.installPromise;
+      // @ts-ignore
+      return this.bot.webhookCallback(path, onTimeout, timeoutMilliseconds)(req, res, next);
+    };
   }
 
   /**
    * Manually handle an update (e.g., from a custom webhook implementation).
    */
   async handleUpdate(update: any, webhookResponse?: any): Promise<void> {
+    await this.installPromise;
     await this.bot.handleUpdate(update, webhookResponse);
   }
 }

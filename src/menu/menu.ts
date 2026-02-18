@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   LayoutBuilderInterface,
   MenuRef,
+  TelebotContext,
 } from "../types.js";
 import { LayoutBuilder } from "./layout.js";
 
@@ -20,7 +21,7 @@ export { ListBuilder } from "./list.js";
  * @returns A {@link MenuRef} object.
  */
 export function createMenu(
-  builder: (layout: LayoutBuilderInterface) => void,
+  builder: (layout: LayoutBuilderInterface, ctx: TelebotContext) => void | Promise<void>,
   options?: { id?: string },
 ): MenuRef {
   const ref: MenuRef = {
@@ -63,8 +64,8 @@ export function createMenu(
  * Compile a MenuRef into a LayoutBuilder (runs the builder function).
  * @internal
  */
-export function compileMenu(ref: MenuRef): LayoutBuilder {
+export async function compileMenu(ref: MenuRef, ctx: TelebotContext): Promise<LayoutBuilder> {
   const layout = new LayoutBuilder();
-  ref.builder(layout);
+  await ref.builder(layout, ctx);
   return layout;
 }

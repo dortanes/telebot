@@ -19,21 +19,31 @@ The `ask()` method pauses execution and waits for the user's next message or but
 
 ### Text Input (Default)
 
+The `ask()` method now defaults to text input if no options are providing, and correctly infers the return type as `string`.
+
 ```ts
-const name = await conversation.ask("Enter your name:");
+const name = await conversation.ask("Enter your name:"); // type: string
 ```
 
 ### Choice (Button) Selection
 
-Passing a builder function to `ask()` displays an inline keyboard.
+Passing a builder function to `ask()` displays a simple inline keyboard for choices. When a button is clicked, `ask()` returns the button's ID (or label text).
 
 ```ts
 const choice = await conversation.ask("Choose a color:", (kb) => {
   kb.button("Red").id("r");
   kb.button("Blue").id("b");
+  kb.button("Green"); // Returns "Green"
 });
-// 'choice' will be the ID ("r" or "b") or the label if no ID is set.
 ```
+
+> [!NOTE]
+> Buttons in `ask()` are for input selection only. If you need navigation, external URLs, or complex action handlers, use `conversation.say()` or regular menus.
+
+#### Supported Button Methods in `ask()`:
+
+- `.id(value)` - Set return value for `ask()`.
+- `.row()` - Force a new layout row.
 
 ### Specialized Input Types
 
@@ -43,7 +53,7 @@ You can request specific types of data using the `options` object:
 // Numbers with validation
 const age = await conversation.ask("How old are you?", {
   type: "number",
-  validate: (n) => n > 0 && n < 120,
+  validate: async (n) => n > 0 && n < 120, // Now supports async!
   errorMessage: "Please enter a realistic age (1-119).",
 });
 
@@ -52,6 +62,39 @@ const fileId = await conversation.ask("Send me a photo:", {
   type: "photo",
   errorMessage: "That wasn't a photo. Try again!",
 });
+```
+
+## Non-blocking Prompts (`say`)
+
+Use `conversation.say()` to update the prompt text and buttons without pausing execution. Unlike `ask()`, buttons in `say()` support the full Telebot button API (actions, navigation, URLs).
+
+```ts
+await conversation.say("Done! Choice recorded.", (kb) => {
+  kb.button("Open Settings").navigate(settingsMenu); // Navigation
+  kb.button("View Result").action(resultAction); // External Action
+  kb.button("Custom Logic").action(async () => {
+    // Inline logic
+    await ui.toast("Executing helper...");
+  });
+  kb.button("Docs").url("https://..."); // External URL
+});
+```
+
+#### Supported Button Methods in `say()`:
+
+- `.action(ref | handler)` - Trigger an action or an inline arrow function.
+- `.menu(ref)` / `.navigate(ref)` - Navigate to another menu.
+- `.url(link)` - Open an external URL.
+- `.payload(data)` - Pass custom data to actions.
+- `.row()` - Force a new layout row.
+- `.id(value)` - Set a custom callback ID.
+
+## Manual Cleanup
+
+If you need to remove the conversation prompt without navigating, use:
+
+```ts
+await conversation.delete();
 ```
 
 ## The `form` Helper

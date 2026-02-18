@@ -1,6 +1,6 @@
 {
   "name": "@superpackages/telebot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A framework for easily building push-button Telegram bots. From the simplest to the most complex.",
   "type": "module",
   "exports": {
