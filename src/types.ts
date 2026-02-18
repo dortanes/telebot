@@ -61,7 +61,6 @@ export type ParseMode = "HTML" | "Markdown" | "MarkdownV2";
 /** Types of input that can be requested from the user */
 export type AskFieldType = "text" | "number" | "photo";
 
-/** Options for the `ask` helper in conversations */
 export interface AskOptions<T = string> {
   /** Expected input type */
   type?: AskFieldType;
@@ -69,6 +68,18 @@ export interface AskOptions<T = string> {
   validate?: (value: T) => boolean | Promise<boolean>;
   /** Message to send if validation fails */
   errorMessage?: string;
+  /** Translation interpolation data */
+  replace?: Record<string, any>;
+  /** Message parse mode */
+  parseMode?: ParseMode;
+}
+
+/** Options for the `say` helper in conversations */
+export interface SayOptions {
+  /** Translation interpolation data */
+  replace?: Record<string, any>;
+  /** Message parse mode */
+  parseMode?: ParseMode;
 }
 
 /** Configuration for a button in an `ask` keyboard */
@@ -100,6 +111,8 @@ export type AskKeyboardBuilder = (keyboard: AskKeyboard) => void;
 export interface AskKeyboard {
   /** Add a button to the keyboard */
   button(text: string): AskKeyboardButton;
+  /** Set maximum number of buttons per row */
+  maxPerRow(count: number): void;
 }
 
 /** Definition for a form field in a multi-step conversation */
@@ -115,17 +128,20 @@ export interface FormFieldDefinition<K extends string = string> {
 /** Helper provided to actions to manage conversations */
 export interface ConversationHelper {
   /** 
-   * Ask for input from the user.
-   * Defaults to text input if no options are provided.
+   * @returns The user input or `undefined` if cancelled/navigated away.
    */
-  ask<T = string>(question: string, options?: AskOptions<T>): Promise<T>;
+  ask<T = string>(question: string, options?: AskOptions<T>): Promise<T | undefined>;
   /** Ask for a choice from a keyboard */
-  ask(question: string, builder: AskKeyboardBuilder): Promise<string>;
+  ask(question: string, builder: AskKeyboardBuilder): Promise<string | undefined>;
+  /** Ask for a choice from a keyboard with options */
+  ask(question: string, options: AskOptions<any>, builder: AskKeyboardBuilder): Promise<string | undefined>;
   /** 
    * Update the current prompt with new text/buttons WITHOUT waiting for input.
    * Useful for showing results or intermediate states.
    */
-  say(text: string, builder?: AskKeyboardBuilder): Promise<void>;
+  say(text: string, options?: SayOptions | AskKeyboardBuilder): Promise<void>;
+  /** Say with both options and a keyboard builder */
+  say(text: string, options: SayOptions, builder: AskKeyboardBuilder): Promise<void>;
   /** 
    * Manually delete the current conversation prompt.
    */
@@ -133,7 +149,7 @@ export interface ConversationHelper {
   /** Run a multi-step form collection */
   form<T extends Record<string, unknown>>(
     fields: FormFieldDefinition<Extract<keyof T, string>>[],
-  ): Promise<T>;
+  ): Promise<T | undefined>;
   /** Navigate to a specific menu or the root menu */
   navigate(menu?: MenuRef): Promise<void>;
 }
@@ -160,6 +176,10 @@ export interface ActionContext<P = undefined> {
   conversation: ConversationHelper;
   /** UI interaction helpers */
   ui: UIHelper;
+  /** Layout builder for response */
+  layout: LayoutBuilderInterface;
+  /** The value of the button ID or 'id' field from payload */
+  id: string;
   /** Navigate to a specific menu or the root menu */
   navigate(menu?: MenuRef): Promise<void>;
 }
@@ -180,7 +200,7 @@ export type DynamicLabel =
   | ((ctx: TelebotContext) => string);
 
 /** Action handler for a button click */
-export type ButtonActionHandler = (() => void) | ActionRef<any>;
+export type ButtonActionHandler = ActionHandler<any> | ActionRef<any>;
 
 /** A reference to a registered action */
 export interface ActionRef<P = undefined> {
@@ -258,6 +278,8 @@ export interface ListConfig<T> {
   columns: number;
   /** Function to render each item as a button */
   renderFn?: (item: T) => ButtonBuilderInterface;
+  /** Default action for all items in the list */
+  action?: ButtonActionHandler;
 }
 
 /** Interface for building menu layouts */
@@ -269,7 +291,7 @@ export interface LayoutBuilderInterface {
   /** Add a button to the menu */
   button(label: DynamicLabel): ButtonBuilderInterface;
   /** Add a paginated grid of items */
-  list<T>(items: T[]): ListBuilderInterface<T>;
+  list<T>(items: T[], action?: ButtonActionHandler): ListBuilderInterface<T>;
   /** Set maximum number of buttons per row */
   maxPerRow(count: number): void;
   /** Add a button that refreshes the current menu */
@@ -280,6 +302,8 @@ export interface LayoutBuilderInterface {
 export interface TextBuilderInterface {
   /** Set the parse mode for the text */
   parseAs(mode: ParseMode): TextBuilderInterface;
+  /** Set interpolation variables for the text */
+  replace(data: Record<string, any>): TextBuilderInterface;
 }
 
 /** Interface for configuring a menu button */
@@ -310,12 +334,14 @@ export interface ListBuilderInterface<T> {
   columns(count: number): ListBuilderInterface<T>;
   /** Define how to render each item */
   render(fn: (item: T) => ButtonBuilderInterface): void;
+  /** Set the default action for items in this list */
+  action(handler: ButtonActionHandler): ListBuilderInterface<T>;
 }
 
 // ─── Engine config ─────────────────────────────────────────────────────────────
 
 /** Function for localizing strings */
-export type Translator = (key: string, ctx: TelebotContext) => string;
+export type Translator = (key: string, ctx: TelebotContext, options?: Record<string, any>) => string;
 
 /** Main configuration for TelebotApp */
 export interface TelebotConfig {

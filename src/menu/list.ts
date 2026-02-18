@@ -2,6 +2,7 @@ import type {
   ListConfig,
   ListBuilderInterface,
   ButtonBuilderInterface,
+  ButtonActionHandler,
 } from "../types.js";
 
 /**
@@ -57,5 +58,14 @@ export class ListBuilder<T> implements ListBuilderInterface<T> {
    */
   render(fn: (item: T) => ButtonBuilderInterface): void {
     this._config.renderFn = fn;
+  }
+
+  /**
+   * Set the default action for items in this list.
+   * @param handler - The action handler or reference.
+   */
+  action(handler: ButtonActionHandler): this {
+    this._config.action = handler;
+    return this;
   }
 }

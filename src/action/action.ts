@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { ActionRef, ActionHandler } from "../types.js";
 
+const globalActions = new Set<ActionRef<any>>();
+
+/**
+ * Returns all actions created via createAction().
+ * @internal
+ */
+export function getGlobalActions(): ActionRef<any>[] {
+  return Array.from(globalActions);
+}
+
 /**
  * Creates a typed action reference.
  * 
@@ -15,7 +25,7 @@ export function createAction<P = undefined>(
 ): ActionRef<P> {
   const ref: ActionRef<P> = {
     __telebot_action: true,
-    id: `act_${randomUUID().slice(0, 8)}`,
+    id: `a${randomUUID().slice(0, 6)}`,
     handler,
     triggers: {},
     /**
@@ -46,5 +56,7 @@ export function createAction<P = undefined>(
       return this;
     },
   };
+
+  globalActions.add(ref);
   return ref;
 }

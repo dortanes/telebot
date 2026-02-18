@@ -13,6 +13,8 @@ import type {
   ActionRef,
   MenuRef,
   ButtonActionHandler,
+  ParseMode,
+  SayOptions,
 } from "../types.js";
 
 // ─── Ask keyboard builder (for button-based ask) ──────────────────────────────
@@ -77,12 +79,18 @@ class AskKeyboardButtonImpl implements AskKeyboardButton {
  */
 class AskKeyboardImpl implements AskKeyboard {
   buttons: AskKeyboardButtonImpl[] = [];
+  _maxPerRow?: number;
 
   /** Add a button to the prompt keyboard */
   button(text: string): AskKeyboardButton {
     const btn = new AskKeyboardButtonImpl(text);
     this.buttons.push(btn);
     return btn;
+  }
+
+  /** Set maximum number of buttons per row */
+  maxPerRow(count: number): void {
+    this._maxPerRow = count;
   }
 }
 
@@ -110,8 +118,8 @@ export function createConversationHelper(
   navigate?: (menu?: any) => Promise<void>,
 ): ConversationHelper {
   
-  const tr = (key: string, defaultText: string) => 
-    translator ? translator(key, ctx) : defaultText;
+  const tr = (key: string, defaultText: string, options?: Record<string, any>) => 
+    translator ? translator(key, ctx, options) : defaultText;
   
   // Track the last bot message ID to edit it
   let lastMessageId: number | undefined = (conversation as any).session?.__telebot_last_msg_id ?? ctx.callbackQuery?.message?.message_id;
@@ -121,10 +129,10 @@ export function createConversationHelper(
    * Helper to edit the previous prompt or send a new message.
    * Manages the "single message" conversation flow.
    */
-  async function editOrReply(text: string, keyboard?: InlineKeyboard) {
+  async function editOrReply(text: string, keyboard?: InlineKeyboard, parseMode?: ParseMode) {
     if (lastMessageId && chatId) {
       try {
-        await ctx.api.editMessageText(chatId, lastMessageId, text, { reply_markup: keyboard });
+        await ctx.api.editMessageText(chatId, lastMessageId, text, { reply_markup: keyboard, parse_mode: parseMode });
         return;
       } catch (e) {
         // If message is not modified, we are fine
@@ -136,7 +144,7 @@ export function createConversationHelper(
       }
     }
     
-    const msg = await ctx.reply(text, { reply_markup: keyboard });
+    const msg = await ctx.reply(text, { reply_markup: keyboard, parse_mode: parseMode });
     lastMessageId = msg.message_id;
     
     const conv = conversation as any;
@@ -144,10 +152,6 @@ export function createConversationHelper(
     conv.session.__telebot_last_msg_id = lastMessageId;
   }
 
-  /** Internal helper to stop conversation */
-  function throwCancel() {
-    throw new Error("TELEBOT_CANCEL");
-  }
 
   /**
    * Universal `ask` helper.
@@ -157,25 +161,45 @@ export function createConversationHelper(
   async function ask<T = any>(
     question: string,
     optionsOrBuilder?: AskOptions<T> | AskKeyboardBuilder,
-  ): Promise<T> {
+    maybeBuilder?: AskKeyboardBuilder,
+  ): Promise<T | undefined> {
     
-    const translatedQuestion = tr(question, question);
+    // Normalize arguments
+    let opts: AskOptions<T> = {};
+    let builder: AskKeyboardBuilder | undefined;
+
+    if (isFunction(optionsOrBuilder)) {
+      builder = optionsOrBuilder;
+    } else if (optionsOrBuilder) {
+      opts = optionsOrBuilder;
+      builder = maybeBuilder;
+    }
+
+    const translatedQuestion = tr(question, question, opts.replace);
 
     // Branch 1: inline-keyboard selection
-    if (isFunction(optionsOrBuilder)) {
+    if (builder) {
       const kb = new AskKeyboardImpl();
-      optionsOrBuilder(kb);
+      builder(kb);
 
       const inlineKb = new InlineKeyboard();
+      let currentInRow = 0;
+
       for (const btn of kb.buttons) {
+        if (btn._forceRow || (kb._maxPerRow && currentInRow >= kb._maxPerRow)) {
+          inlineKb.row();
+          currentInRow = 0;
+        }
+
         const btnId = btn._id ?? btn.text;
-        const btnLabel = tr(btn.text, btn.text);
+        const btnLabel = tr(btn.text, btn.text, opts.replace);
         inlineKb.text(btnLabel, `ask:${btnId}`);
+        currentInRow++;
       }
       const cancelText = tr("telebot.cancel", "🚫 Cancel");
       inlineKb.row().text(cancelText, "ask:__cancel__");
 
-      await editOrReply(translatedQuestion, inlineKb);
+      await editOrReply(translatedQuestion, inlineKb, opts.parseMode);
 
       const cbCtx = await conversation.waitForCallbackQuery(/^ask:/, {
         otherwise: async (c) => {
@@ -187,14 +211,14 @@ export function createConversationHelper(
       const data = cbCtx.callbackQuery.data!.replace(/^ask:/, "");
       
       if (data === "__cancel__") {
-          throwCancel();
+          await navigateTo();
+          return undefined;
       }
       
       return data as any as T;
     }
 
     // Branch 2: text / number / photo input
-    const opts = (optionsOrBuilder || { type: "text" }) as AskOptions<any>;
     const fieldType: AskFieldType = opts.type ?? "text";
 
     const cancelText = tr("telebot.cancel", "🚫 Cancel");
@@ -207,19 +231,20 @@ export function createConversationHelper(
     // Loop until valid input
     // eslint-disable-next-line no-constant-condition
     while (true) {
-        await editOrReply(currentPrompt, cancelKb);
+        await editOrReply(currentPrompt, cancelKb, opts.parseMode);
 
         if (fieldType === "photo") {
             const updateCtx = await conversation.waitFor(["message:photo", "callback_query:data"]);
             
             if (updateCtx.callbackQuery?.data === "cancel_conversation") {
                 await updateCtx.answerCallbackQuery();
-                throwCancel();
+                await navigateTo();
+                return undefined;
             }
 
             if (!updateCtx.message?.photo) {
                 try { await updateCtx.deleteMessage(); } catch {}
-                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.photo_error", "Please send a photo.");
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.photo_error", "Please send a photo.");
                 currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
@@ -230,13 +255,13 @@ export function createConversationHelper(
             const photos = updateCtx.message.photo;
             if (photos && photos.length > 0) {
               const val = photos[photos.length - 1]!.file_id;
-              if (opts.validate && !(await opts.validate(val))) {
-                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
+              if (opts.validate && !(await opts.validate(val as unknown as T))) {
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
                 currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
               }
-              return val as any as T;
+              return val as unknown as T;
             }
         }
 
@@ -245,12 +270,13 @@ export function createConversationHelper(
 
         if (updateCtx.callbackQuery?.data === "cancel_conversation") {
             await updateCtx.answerCallbackQuery();
-            throwCancel();
+            await navigateTo();
+            return undefined;
         }
 
         if (!updateCtx.message?.text) {
             try { await updateCtx.deleteMessage(); } catch {}
-            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.text_error", "Please send a text message.");
+            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.text_error", "Please send a text message.");
             currentPrompt = `${err}\n\n${translatedQuestion}`;
             isError = true;
             continue;
@@ -263,27 +289,27 @@ export function createConversationHelper(
         if (fieldType === "number") {
             const n = Number(raw);
             if (Number.isNaN(n)) {
-                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.number_error", "Please send a valid number.");
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.number_error", "Please send a valid number.");
                 currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
             }
-            if (opts.validate && !(await opts.validate(n))) {
-                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
+            if (opts.validate && !(await opts.validate(n as unknown as T))) {
+                const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
                 currentPrompt = `${err}\n\n${translatedQuestion}`;
                 isError = true;
                 continue;
             }
-            return n as any as T;
+            return n as unknown as T;
         }
 
-        if (opts.validate && !(await opts.validate(raw))) {
-            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
+        if (opts.validate && !(await opts.validate(raw as unknown as T))) {
+            const err = opts.errorMessage ? tr(opts.errorMessage, opts.errorMessage, opts.replace) : tr("telebot.conversation.invalid_error", "Invalid input. Try again.");
             currentPrompt = `${err}\n\n${translatedQuestion}`;
             isError = true;
             continue;
         }
-        return raw as any as T;
+        return raw as unknown as T;
     }
   }
 
@@ -292,51 +318,67 @@ export function createConversationHelper(
    */
   async function form<T extends Record<string, unknown>>(
     fields: FormFieldDefinition<Extract<keyof T, string>>[],
-  ): Promise<T> {
+  ): Promise<T | undefined> {
     const result: Record<string, unknown> = {};
     for (const field of fields) {
-      result[field.name] = await ask(field.question, {
+      const val = await ask(field.question, {
         type: field.type,
       } as AskOptions<any>);
+      if (val === undefined) return undefined;
+      result[field.name] = val;
     }
     return result as T;
   }
 
-  async function say(text: string, builder?: AskKeyboardBuilder) {
-    const translated = tr(text, text);
+  async function say(text: string, optionsOrBuilder?: SayOptions | AskKeyboardBuilder, maybeBuilder?: AskKeyboardBuilder) {
+    let opts: SayOptions = {};
+    let builder: AskKeyboardBuilder | undefined;
+
+    if (isFunction(optionsOrBuilder)) {
+      builder = optionsOrBuilder;
+    } else if (optionsOrBuilder) {
+      opts = optionsOrBuilder;
+      builder = maybeBuilder;
+    }
+
+    const translated = tr(text, text, opts.replace);
     let kb: InlineKeyboard | undefined;
 
     if (builder) {
       const askKb = new AskKeyboardImpl();
       builder(askKb);
       kb = new InlineKeyboard();
+      let currentInRow = 0;
+
       for (const btn of askKb.buttons) {
-        if (btn._forceRow) kb.row();
-        const label = tr(btn.text, btn.text);
+        if (btn._forceRow || (askKb._maxPerRow && currentInRow >= askKb._maxPerRow)) {
+          kb.row();
+          currentInRow = 0;
+        }
+
+        const label = tr(btn.text, btn.text, opts.replace);
         if (btn._url) {
           kb.url(label, btn._url);
         } else if (btn._menu) {
-          kb.text(label, `nav:${btn._menu.id}`);
+          kb.text(label, `n:${btn._menu.id}`);
         } else if (btn._action) {
            if (typeof btn._action === "function") {
              // In say(), inline functions don't have a stable way to be triggered 
-             // because there's no loop. For now, we'll use a generic act: prefix
-             // but it won't work unless registered.
-             // To support "as in other keyboards", we might need a more global registry
-             // but user wants no overhead. 
-             // We'll use a generic ID for now.
+             // because there's no loop. 
              kb.text(label, `ask_fn_say:${btn._id ?? btn.text}`);
            } else {
-             const payloadStr = btn._payload ? JSON.stringify(btn._payload) : "";
-             kb.text(label, `act:${btn._action.id}:${payloadStr}`);
+             const p = btn._payload;
+             const pStr = p && Object.keys(p).length === 1 && "id" in p ? String(p.id) : (p ? JSON.stringify(p) : "");
+             kb.text(label, `a:${btn._action.id}/:${pStr}`);
            }
         } else {
           kb.text(label, `ask:${btn._id ?? btn.text}`);
         }
+        currentInRow++;
       }
     }
 
-    await editOrReply(translated, kb);
+    await editOrReply(translated, kb, opts.parseMode);
   }
 
   async function deletePrompt() {
@@ -357,7 +399,6 @@ export function createConversationHelper(
   async function navigateTo(menu?: any) {
     if (navigate) {
       await navigate(menu);
-      throw new Error("TELEBOT_CANCEL"); // Exit conversation after navigation
     }
   }
 

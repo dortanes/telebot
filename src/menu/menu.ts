@@ -10,6 +10,16 @@ export { LayoutBuilder } from "./layout.js";
 export { ButtonBuilder } from "./button.js";
 export { ListBuilder } from "./list.js";
 
+const globalMenus = new Set<MenuRef>();
+
+/**
+ * Returns all menus created via createMenu().
+ * @internal
+ */
+export function getGlobalMenus(): MenuRef[] {
+  return Array.from(globalMenus);
+}
+
 /**
  * Creates a MenuRef — a serializable reference to a menu definition.
  *
@@ -26,7 +36,7 @@ export function createMenu(
 ): MenuRef {
   const ref: MenuRef = {
     __telebot_menu: true,
-    id: options?.id ?? `menu_${randomUUID().slice(0, 8)}`,
+    id: options?.id ?? `m${randomUUID().slice(0, 6)}`,
     builder,
     triggers: {},
     /**
@@ -57,6 +67,8 @@ export function createMenu(
       return this;
     },
   };
+
+  globalMenus.add(ref);
   return ref;
 }
 

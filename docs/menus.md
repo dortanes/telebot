@@ -20,6 +20,16 @@ const mainMenu = Telebot.menu((layout) => {
 });
 ```
 
+### Text Interpolation
+
+Menu text supports variable interpolation using the `.replace()` method.
+
+```ts
+Telebot.menu((layout, ctx) => {
+  layout.text("Hello, {name}!").replace({ name: ctx.user.firstName });
+});
+```
+
 ## Media and Images
 
 You can include a header image in your menu using `layout.image(url)`.
@@ -36,6 +46,7 @@ The `layout.button(label)` method returns a `ButtonBuilder` with several configu
 ### Navigation & Actions
 
 - `.menu(menuRef)`: Opens another menu. Telebot automatically tracks the navigation stack and adds a "Back" button.
+- `.navigate(menuRef)`: Shorthand alias for `.menu()`.
 - `.action(handler)`: Triggers a logic handler.
   - If the handler is **async**, it becomes a **Conversational Action** (can use `conversation.ask()`).
   - If the handler is **sync**, it becomes a **Sync Action** (useful for immediate UI changes like tabs).
@@ -70,14 +81,11 @@ For long lists of items, use `layout.list()`:
 
 ```ts
 layout
-  .list(users)
+  .list(users, viewUserAction) // Register action for the whole list
   .perPage(5)
   .columns(2)
-  .render((user) =>
-    layout
-      .button(user.name)
-      .payload({ userId: user.id })
-      .action(viewUserAction),
+  .render(
+    (user) => layout.button(user.name).id(user.id), // This ID is passed to viewUserAction as 'id'
   );
 ```
 

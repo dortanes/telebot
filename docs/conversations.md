@@ -44,6 +44,14 @@ const choice = await conversation.ask("Choose a color:", (kb) => {
 
 - `.id(value)` - Set return value for `ask()`.
 - `.row()` - Force a new layout row.
+- `.maxPerRow(n)` - Automatically wrap buttons after `n` items.
+
+```ts
+const country = await conversation.ask("Select location:", (kb) => {
+  kb.maxPerRow(3); // 3-column grid
+  locations.forEach((l) => kb.button(l.name).id(l.code));
+});
+```
 
 ### Specialized Input Types
 
@@ -61,6 +69,16 @@ const age = await conversation.ask("How old are you?", {
 const fileId = await conversation.ask("Send me a photo:", {
   type: "photo",
   errorMessage: "That wasn't a photo. Try again!",
+});
+```
+
+### Translation & Interpolation
+
+All methods in `conversation` support translation keys and variable interpolation via the `replace` option:
+
+```ts
+await conversation.ask("prompt.welcome", {
+  replace: { name: ctx.user.firstName },
 });
 ```
 
@@ -123,6 +141,14 @@ To keep the chat clean, Telebot uses a "Single Message" approach:
 
 Every `ask()` prompt automatically includes a **"🚫 Cancel"** button.
 
-- If the user clicks it, an internal error is thrown that terminates the action.
+- If the user clicks it, the `ask()` or `form()` call returns `undefined` (or throws an internal error that returns the user to the previous menu).
 - Telebot catches this and automatically returns the user to the previous menu.
-- You don't need to write any `try/catch` logic for cancellation unless you need manual cleanup.
+- You can manually check for `undefined` if you need to perform cleanup:
+
+```ts
+const result = await conversation.ask("...");
+if (result === undefined) {
+  // User cancelled or navigated away
+  return;
+}
+```

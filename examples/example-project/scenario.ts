@@ -52,6 +52,9 @@ const registerAction = Telebot.command('register').action(async ({ ctx, conversa
     { name: "bio", question: "Tell us a bit about yourself:", type: "text" },
     { name: "photo", question: "Please upload a profile picture:", type: "photo" }
   ]);
+  
+  // Do not continue if form was skipped
+  if (!form) return;
 
   // Using UI alerts for critical feedback
   if (form.age < 18) {

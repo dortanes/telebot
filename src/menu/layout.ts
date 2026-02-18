@@ -4,6 +4,7 @@ import type {
   ButtonBuilderInterface,
   ListBuilderInterface,
   TextBuilderInterface,
+  ButtonActionHandler,
   ParseMode,
 } from "../types.js";
 import { ButtonBuilder } from "./button.js";
@@ -14,7 +15,7 @@ import { ListBuilder } from "./list.js";
  * @internal
  */
 export type LayoutElement =
-  | { kind: "text"; content: string; parseMode?: ParseMode }
+  | { kind: "text"; content: string; parseMode?: ParseMode; replace?: Record<string, any> }
   | { kind: "image"; url: string }
   | { kind: "button"; builder: ButtonBuilder }
   | { kind: "list"; builder: ListBuilder<any> }
@@ -67,9 +68,11 @@ export class LayoutBuilder implements LayoutBuilderInterface {
   /**
    * Create a paginated list of items.
    * @param items - Array of items to display.
+   * @param action - Optional default action for items.
    */
-  list<T>(items: T[]): ListBuilderInterface<T> {
+  list<T>(items: T[], action?: ButtonActionHandler): ListBuilderInterface<T> {
     const builder = new ListBuilder<T>(items);
+    if (action) builder.action(action);
     this._elements.push({ kind: "list", builder });
     return builder;
   }
@@ -101,6 +104,12 @@ export class TextBuilder implements TextBuilderInterface {
   /** Set the parse mode for this text block. */
   parseAs(mode: ParseMode): TextBuilderInterface {
     this.element.parseMode = mode;
+    return this;
+  }
+
+  /** Set interpolation variables for the text */
+  replace(data: Record<string, any>): TextBuilderInterface {
+    this.element.replace = data;
     return this;
   }
 }

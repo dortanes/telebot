@@ -17,6 +17,8 @@ import { ButtonBuilder, isActionRef } from "../menu/button.js";
 import type { ListBuilder } from "../menu/list.js";
 import { createConversationHelper } from "../conversation/conversation.js";
 import { createUIHelper } from "../ui/ui.js";
+import { getGlobalActions } from "../action/action.js";
+import { getGlobalMenus } from "../menu/menu.js";
 
 // ─── Pagination state (in-memory, per-chat, per-menu-list) ────────────────────
 
@@ -58,8 +60,8 @@ interface CollectedMenu {
 }
 
 function resolveStableId(menuId: string, cfg: ButtonConfig, index: number): string {
-  if (cfg.buttonId) return `act_${cfg.buttonId}`;
-  return `act_${menuId}_${index}`;
+  if (cfg.buttonId) return `a${cfg.buttonId}`;
+  return `a${menuId}_${index}`;
 }
 
 async function collectMenuTree(
@@ -136,8 +138,9 @@ async function buildKeyboard(
   layout: LayoutBuilder,
   ctx: TelebotContext,
   chatId: number,
-  translator?: (key: string, ctx: TelebotContext) => string,
+  translator?: Translator,
   backToMenuId?: string,
+  currentPayload?: any,
 ): Promise<{ text: string; keyboard: InlineKeyboard; parseMode?: ParseMode; imageUrl?: string }> {
   const keyboard = new InlineKeyboard();
   let text = "";
@@ -167,7 +170,7 @@ async function buildKeyboard(
   for (const el of snapshotElements) {
     switch (el.kind) {
       case "text": {
-        text = translator ? translator(el.content, ctx) : el.content;
+        text = translator ? translator(el.content, ctx, el.replace) : el.content;
         parseMode = el.parseMode;
         break;
       }
@@ -201,18 +204,26 @@ async function buildKeyboard(
         } else if (cfg.inlineHandler) {
           // Use stable ID for inline conversational action
           const id = resolveStableId(menuId, cfg, myIndex);
-          const payloadStr = cfg.payload ? JSON.stringify(cfg.payload) : "";
-          cbData = `act:${id}__m__${menuId}:${payloadStr}`;
+          const p = cfg.payload !== undefined ? cfg.payload : currentPayload;
+          // Use button ID as payload if no payload is provided
+          const pStr = p && typeof p === "object" && Object.keys(p).length === 1 && "id" in p ? String(p.id) : (p !== undefined ? JSON.stringify(p) : (cfg.buttonId || ""));
+          
+          // If the "menu" is actually an action, we use 'ai:' (Action Inline)
+          // because these are not pre-registered as conversations during scan.
+          const prefix = menuId.startsWith("a") ? "ai:" : "a:";
+          cbData = `${prefix}${id}/${menuId}:${pStr}`;
         } else if (cfg.submenu) {
-          cbData = `nav:${cfg.submenu.id}`;
+          cbData = `n:${cfg.submenu.id}`;
         } else if (cfg.action && isActionRef(cfg.action)) {
-          const payloadStr = cfg.payload ? JSON.stringify(cfg.payload) : "";
-          cbData = `act:${cfg.action.id}__m__${menuId}:${payloadStr}`;
+          const p = cfg.payload;
+          // Use button ID as payload if no payload is provided
+          const pStr = p && Object.keys(p).length === 1 && "id" in p ? String(p.id) : (p ? JSON.stringify(p) : (cfg.buttonId || ""));
+          cbData = `a:${cfg.action.id}/${menuId}:${pStr}`;
         } else if (cfg.action && !isActionRef(cfg.action)) {
           // Tab-style inline action (sync)
-          cbData = `tab:${menuId}:${btnId}`;
+          cbData = `t:${menuId}:${btnId}`;
         } else {
-          cbData = `noop:${menuId}:${btnId}`;
+          cbData = `_:${menuId}:${btnId}`;
         }
 
         // Mark active tab visually if possible? 
@@ -248,16 +259,22 @@ async function buildKeyboard(
             colCount = 0;
           }
           const btn = lcfg.renderFn(item) as ButtonBuilder;
+          // Apply default action from list if button has none
+          if (!btn._config.action && !btn._config.inlineHandler && !btn._config.submenu && lcfg.action) {
+            btn.action(lcfg.action);
+          }
           const bcfg = btn._config;
           const label = resolveLabel(bcfg, ctx, translator);
           const btnId = bcfg.buttonId ?? label;
 
           let cbData: string;
           if (bcfg.action && isActionRef(bcfg.action)) {
-            const payloadStr = bcfg.payload ? JSON.stringify(bcfg.payload) : "";
-            cbData = `act:${bcfg.action.id}__m__${menuId}:${payloadStr}`;
+            const p = bcfg.payload !== undefined ? bcfg.payload : currentPayload;
+            // Use button ID as payload if no payload is provided
+            const pStr = p && typeof p === "object" && Object.keys(p).length === 1 && "id" in p ? String(p.id) : (p !== undefined ? JSON.stringify(p) : (bcfg.buttonId || ""));
+            cbData = `a:${bcfg.action.id}/${menuId}:${pStr}`;
           } else {
-            cbData = `noop:${menuId}:${btnId}`;
+            cbData = `_:${menuId}:${btnId}`;
           }
           keyboard.text(label, cbData);
           colCount++;
@@ -267,11 +284,11 @@ async function buildKeyboard(
         if (totalPages > 1) {
           keyboard.row();
           if (currentPage > 0) {
-            keyboard.text("⬅️", `page:${menuId}:${listIdx}:${currentPage - 1}`);
+            keyboard.text("⬅️", `p:${menuId}:${listIdx}:${currentPage - 1}`);
           }
-          keyboard.text(`${currentPage + 1}/${totalPages}`, `noop:${menuId}:page-info`);
+          keyboard.text(`${currentPage + 1}/${totalPages}`, `_:${menuId}:page-info`);
           if (currentPage < totalPages - 1) {
-            keyboard.text("➡️", `page:${menuId}:${listIdx}:${currentPage + 1}`);
+            keyboard.text("➡️", `p:${menuId}:${listIdx}:${currentPage + 1}`);
           }
         }
 
@@ -284,7 +301,7 @@ async function buildKeyboard(
       case "refresh": {
         keyboard.row();
         const label = translator ? translator(el.label, ctx) : el.label;
-        keyboard.text(label, `refresh:${menuId}`);
+        keyboard.text(label, `r:${menuId}`);
         currentRowCount = 0;
         break;
       }
@@ -295,7 +312,7 @@ async function buildKeyboard(
   if (backToMenuId) {
     keyboard.row();
     const backText = translator ? translator("telebot.back", ctx) : "◀️ Back";
-    keyboard.text(backText, `nav:${backToMenuId}`);
+    keyboard.text(backText, `n:${backToMenuId}`);
   }
 
   return { text: text || "Menu", keyboard, parseMode, imageUrl };
@@ -327,8 +344,24 @@ export async function installMenu(
   
   // We cannot wait for initial collection here because installMenu MUST be sync
   // to be used in constructor. We'll lazy-collect or do it in start().
-  // 0. Collect the menu tree (recursively find all menus and actions)
+  // 0. Collect the menu tree (recursively find all menus and actions reachable from root)
   await collectMenuTree(rootRef, menus, actions);
+
+  // 0.5. Register global actions and menus that might have been missed by recursive scan (orphan items)
+  for (const action of getGlobalActions()) {
+    if (!actions.has(action.id)) {
+      actions.set(action.id, action);
+    }
+  }
+
+  for (const menu of getGlobalMenus()) {
+    if (!menus.has(menu.id)) {
+      // For orphan menus, we don't know the parent, so parent is undefined
+      // We still need a LayoutBuilder to handle it correctly in renderMenu
+      const layout = new LayoutBuilder();
+      menus.set(menu.id, { ref: menu, layout, parent: undefined });
+    }
+  }
 
   // 1. Install Session Middleware (Required for Conversations)
   bot.use(session<TelebotSession, TelebotContext>({
@@ -397,14 +430,19 @@ export async function installMenu(
         }
       }
 
-      if (payload === undefined && ctx.callbackQuery?.data?.startsWith("act:")) {
-         const parts = ctx.callbackQuery.data.split("__m__");
+      if (payload === undefined && ctx.callbackQuery?.data?.startsWith("a:")) {
+         const parts = ctx.callbackQuery.data.split("/");
          if (parts.length > 1) {
              const rest = parts[1];
              const colonIdx = rest.indexOf(":");
-             const payloadStr = colonIdx !== -1 ? rest.slice(colonIdx + 1) : "";
-             if (payloadStr) {
-                try { payload = JSON.parse(payloadStr); } catch {}
+             const pStr = colonIdx !== -1 ? rest.slice(colonIdx + 1) : "";
+             if (pStr) {
+                if (pStr.startsWith("{")) {
+                   try { payload = JSON.parse(pStr); } catch {}
+                } else {
+                   // Raw ID optimization: if it looks like a number, parse it, else keep as string
+                   payload = { id: isNaN(Number(pStr)) ? pStr : Number(pStr) };
+                }
              }
          }
       }
@@ -454,39 +492,49 @@ export async function installMenu(
         }
       }
 
+      const layout = new LayoutBuilder();
+
       try {
         await actionRef.handler({
           ctx,
           payload: payload || ({} as any), // Fallback to empty object to prevent crash on destructuring
+          id: (typeof payload === "object" && payload !== null && "id" in payload) ? String(payload.id) : String(payload !== undefined && payload !== null ? payload : ""),
           conversation: conversationHelper,
           ui: uiHelper,
+          layout,
           navigate,
         });
+
+        // If action populated the layout, render it
+        if (layout._elements.length > 0) {
+          const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(
+            actionRef.id, // Use the actual action ID so stable IDs can be re-resolved
+            layout,
+            ctx,
+            ctx.chat!.id,
+            config.translator,
+            undefined, // backToMenuId
+            payload, // Pass current action payload for inheritance
+          );
+
+          const messageToEdit = (conversation as any).session?.__telebot_last_msg_id ?? ctx.callbackQuery?.message?.message_id;
+          const isPhotoMessage = !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message;
+
+          await internalRenderLayout(
+            ctx.chat!.id,
+            text,
+            keyboard,
+            parseMode,
+            imageUrl,
+            ctx,
+            true, // try to edit if possible
+            messageToEdit,
+            isPhotoMessage,
+            undefined,
+          );
+        }
       } catch (e) {
         const err = e as Error;
-        if (err.message === "TELEBOT_CANCEL") {
-          // Navigate back to origin menu if possible
-          await conversation.external(async (c) => {
-              // Re-resolve user to pick up changes made during the action (if any)
-              if (config.resolveUser) {
-                try {
-                  c.user = await config.resolveUser(c) ?? {};
-                } catch (e) {
-                  console.error("[Telebot] Error re-resolving user during cancellation:", e);
-                }
-              }
-              if (c.session.originMenuId) {
-                 await renderMenu(c.session.originMenuId, c, c.chat!.id, true);
-              } else {
-                 // started from text trigger - delete the prompt message if we have its ID
-                 const msgId = (conversation as any).session?.__telebot_last_msg_id;
-                 if (msgId && c.chat) {
-                    try { await c.api.deleteMessage(c.chat.id, msgId); } catch {}
-                 }
-              }
-          });
-          return;
-        }
         if (err.message === "TELEBOT_EXTERNAL") {
           return; // Exit silently, let next middleware take over
         }
@@ -506,16 +554,16 @@ export async function installMenu(
   // This middleware intercept `act:` callbacks and manually flags the conversation
   // so that when the specific `createConversation` middleware runs next, it picks it up immediately.
   bot.use(async (ctx, next) => {
-    if (ctx.callbackQuery?.data && ctx.callbackQuery.data.startsWith("act:")) {
+    if (ctx.callbackQuery?.data && ctx.callbackQuery.data.startsWith("a:")) {
         const data = ctx.callbackQuery.data;
-        const parts = data.split("__m__");
+        const parts = data.split("/");
         
         let actionId: string;
         let originMenuId: string | undefined;
         
         if (parts.length > 1) {
              const left = parts[0]; 
-             actionId = left.slice(4); // remove "act:"
+             actionId = left.slice(2); // remove "a:"
              
              const right = parts[1];
              const colonIdx = right.indexOf(":");
@@ -525,10 +573,10 @@ export async function installMenu(
                  originMenuId = right;
              }
         } else {
-             actionId = data.slice(4);
+             actionId = data.slice(2);
         }
         
-        if (originMenuId === "undefined") originMenuId = undefined;
+        if (originMenuId === "" || originMenuId === "undefined") originMenuId = undefined;
         if (ctx.session) ctx.session.originMenuId = originMenuId;
         
         const conversationId = `telebot_${actionId}`;
@@ -625,7 +673,10 @@ export async function installMenu(
   ) {
       const menu = menus.get(menuId);
       if (!menu) {
-          if (edit) await ctx.answerCallbackQuery("Menu not found");
+          if (edit) {
+              try { await ctx.deleteMessage(); } catch {}
+          }
+          await renderMenu(rootRef.id, ctx, chatId, false); // Fallback to root
           return;
       }
       
@@ -640,6 +691,33 @@ export async function installMenu(
       const messageToEdit = targetMessageId ?? ctx.callbackQuery?.message?.message_id;
       const isPhotoMessage = !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message;
 
+      await internalRenderLayout(
+        chatId,
+        text,
+        keyboard,
+        parseMode,
+        imageUrl,
+        ctx,
+        edit,
+        messageToEdit,
+        isPhotoMessage,
+        targetMessageId,
+      );
+  }
+
+  /** @internal */
+  async function internalRenderLayout(
+    chatId: number,
+    text: string,
+    keyboard: InlineKeyboard,
+    parseMode: ParseMode | undefined,
+    imageUrl: string | undefined,
+    ctx: TelebotContext,
+    edit: boolean,
+    messageToEdit: number | undefined,
+    isPhotoMessage: boolean,
+    targetMessageId: number | undefined,
+  ) {
       if (edit && messageToEdit) {
         try {
             if (imageUrl) {
@@ -651,9 +729,6 @@ export async function installMenu(
                 );
               } else {
                 // Transition or explicit target: delete and send new (or try editing media if we have ID)
-                // For targetMessageId, it's safer to just delete and send new if types might differ,
-                // but if we are sure it's a photo we could edit. 
-                // However, Telebot usually handles transitions by delete/send.
                 try { await ctx.api.deleteMessage(chatId, messageToEdit); } catch {}
                 await ctx.replyWithPhoto(imageUrl, { caption: text, reply_markup: keyboard, parse_mode: parseMode });
               }
@@ -704,22 +779,22 @@ export async function installMenu(
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
 
-    if (data.startsWith("act:")) {
+    if (data.startsWith("a:")) {
         const active = await ctx.conversation.active();
         if (Object.keys(active).length > 0) return;
         await ctx.answerCallbackQuery();
         return;
     }
 
-    if (data.startsWith("nav:")) {
-      const targetMenuId = data.slice(4);
+    if (data.startsWith("n:")) {
+      const targetMenuId = data.slice(2);
       const chatId = ctx.chat!.id;
       await renderMenu(targetMenuId, ctx as TelebotContext, chatId, true);
       await ctx.answerCallbackQuery();
       return;
     }
 
-    if (data.startsWith("page:")) {
+    if (data.startsWith("p:")) {
       const parts = data.split(":");
       const menuIdStr = parts[1]!;
       const listIdxStr = parts[2]!;
@@ -732,15 +807,15 @@ export async function installMenu(
       return;
     }
 
-    if (data.startsWith("refresh:")) {
-      const menuIdStr = data.slice(8);
+    if (data.startsWith("r:")) {
+      const menuIdStr = data.slice(2);
       const chatId = ctx.chat!.id;
       await renderMenu(menuIdStr, ctx as TelebotContext, chatId, true);
       await ctx.answerCallbackQuery();
       return;
     }
 
-    if (data.startsWith("tab:")) {
+    if (data.startsWith("t:")) {
        const parts = data.split(":");
        const menuIdStr = parts[1]!;
        const tabBtnId = parts.slice(2).join(":");
@@ -769,7 +844,118 @@ export async function installMenu(
        return;
     }
 
-    if (data.startsWith("noop:")) {
+    if (data.startsWith("ai:")) {
+       // Action Inline handler: execute closure by re-running the parent action
+       const parts = data.split("/");
+       if (parts.length < 2) return;
+       const left = parts[0].slice(3); // stableId
+       const right = parts[1];
+       const colonIdx = right.indexOf(":");
+       const originActionId = colonIdx !== -1 ? right.slice(0, colonIdx) : right;
+       const pStr = colonIdx !== -1 ? right.slice(colonIdx + 1) : "";
+
+       let payload: any;
+       if (pStr) {
+         if (pStr.startsWith("{")) {
+            try { payload = JSON.parse(pStr); } catch {}
+         } else {
+            payload = { id: isNaN(Number(pStr)) ? pStr : Number(pStr) };
+         }
+       }
+
+       const action = actions.get(originActionId);
+       if (!action) {
+           await ctx.answerCallbackQuery("Action expired or not found.");
+           return;
+       }
+
+       // We need to re-run the action to find the inline closure
+       const layout = new LayoutBuilder();
+       const idVal = (payload && typeof payload === "object" && "id" in payload) ? String(payload.id) : (payload !== undefined && payload !== null ? String(payload) : "");
+       
+       const navigate = async (menu?: MenuRef) => {
+         await renderMenu(menu?.id || rootRef.id, ctx as TelebotContext, ctx.chat!.id, true);
+       };
+
+       const mockConv = { 
+         session: ctx.session,
+         external: (fn: any) => fn(ctx),
+       } as any;
+       const conversationHelper = createConversationHelper(mockConv, ctx as TelebotContext, config.translator, navigate);
+
+       // Execute parent action purely to find the button
+       await action.handler({
+         ctx: ctx as TelebotContext,
+         payload: payload || {},
+         id: idVal,
+         conversation: conversationHelper,
+         ui: createUIHelper(ctx as TelebotContext),
+         layout,
+         navigate,
+       });
+
+       // Find the button and run its handler
+       let btn;
+       let bidx = 0;
+       for (const el of layout._elements) {
+         if (el.kind === "button") {
+           const sid = resolveStableId(originActionId, el.builder._config, bidx);
+           if (sid === left) {
+             btn = el.builder;
+             break;
+           }
+           bidx++;
+         }
+       }
+
+       if (btn && btn._config.inlineHandler) {
+         await ctx.answerCallbackQuery();
+         const subLayout = new LayoutBuilder();
+         await btn._config.inlineHandler({
+           ctx: ctx as TelebotContext,
+           payload: payload || {}, // inherit payload
+           id: idVal,
+           conversation: conversationHelper,
+           ui: createUIHelper(ctx as TelebotContext),
+           layout: subLayout,
+           navigate,
+         });
+
+         // If the sub-action also populated a layout, render it!
+         if (subLayout._elements.length > 0) {
+            const { text, keyboard, parseMode, imageUrl } = await buildKeyboard(
+              originActionId,
+              subLayout,
+              ctx as TelebotContext,
+              ctx.chat!.id,
+              config.translator,
+              undefined, // backToMenuId
+              payload, // Pass current action payload for inheritance
+            );
+            
+            const messageToEdit = ctx.callbackQuery?.message?.message_id;
+            const isPhotoMessage = !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message;
+
+            await internalRenderLayout(
+                ctx.chat!.id,
+                text,
+                keyboard,
+                parseMode,
+                imageUrl,
+                ctx as TelebotContext,
+                true,
+                messageToEdit,
+                isPhotoMessage,
+                undefined,
+            );
+         }
+       } else {
+         await ctx.answerCallbackQuery();
+       }
+       return;
+    }
+
+    if (data.startsWith("_:")) {
       await ctx.answerCallbackQuery();
       return;
     }
