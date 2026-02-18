@@ -241,8 +241,15 @@ async function buildKeyboard(
         if (!lcfg.renderFn) break;
 
         const pk = pageKey(chatId, menuId, listIdx);
-        const currentPage = pageState.get(pk) ?? 0;
+        let currentPage = pageState.get(pk) ?? 0;
         const totalPages = Math.ceil(lcfg.items.length / lcfg.itemsPerPage);
+
+        // Fix: if current page is out of bounds (e.g. items deleted), go to last valid page
+        if (currentPage >= totalPages) {
+          currentPage = Math.max(0, totalPages - 1);
+          pageState.set(pk, currentPage);
+        }
+
         const startIdx = currentPage * lcfg.itemsPerPage;
         const pageItems = lcfg.items.slice(startIdx, startIdx + lcfg.itemsPerPage);
 
